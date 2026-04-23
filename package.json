@@ -1,0 +1,7 @@
+{
+  "name": "kiosk-tv",
+  "private": true,
+  "scripts": {
+    "start": "npx serve . --listen 8080"
+  }
+}

@@ -1,0 +1,11 @@
+// config.js -- DO NOT COMMIT (listed in .gitignore)
+const CONFIG = {
+  // Cloudflare Worker URL (deployed via: npx wrangler deploy)
+  WORKER_URL: 'https://kiosk-playlist.YOUR_SUBDOMAIN.workers.dev',
+
+  IMAGE_DURATION_SEC:  4,
+  PLAYLIST_REFRESH_MS: 5 * 60 * 1000,
+
+  IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  VIDEO_TYPES: ['video/mp4', 'video/webm', 'video/quicktime'],
+};

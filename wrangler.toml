@@ -1,0 +1,7 @@
+name       = "kiosk-playlist"
+main       = "worker.js"
+workers_sdk_version = "^3"
+
+[[r2_buckets]]
+binding     = "KIOSK_BUCKET"
+bucket_name = "kiosk-media"
