@@ -396,7 +396,7 @@ async function refreshPlaylist() {
 
 async function init() {
   // Validate config
-  if (CONFIG.API_KEY === 'AIzaSyDHZdTYxjrtjEmi1xd4C-t3M3cbVFiZkxQ' || FOLDER_ID.startsWith('YOUR_FOLDER_ID')) {
+  if (CONFIG.API_KEY === 'YOUR_API_KEY_HERE' || FOLDER_ID.startsWith('YOUR_FOLDER_ID')) {
     overlayMsg.textContent = 'Configure API_KEY and FOLDERS in the script.';
     overlay.classList.remove('hidden');
     document.querySelector('.spinner').style.display = 'none';
