@@ -44,7 +44,7 @@ export default {
         const mimeType = MIME_MAP[ext] ?? 'application/octet-stream';
         return {
           name:     obj.key.replace(prefix, ''),
-          url:      `${PUBLIC_BASE}/${obj.key}`,
+          url:      `${PUBLIC_BASE}/${obj.key.split('/').map(encodeURIComponent).join('/')}`,
           mimeType,
         };
       })
