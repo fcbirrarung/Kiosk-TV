@@ -154,6 +154,10 @@
    URL usage: kiosk.html?tv=1  /  ?tv=2  /  ?tv=3  (defaults to TV 1) */
 
 /* ─── RESOLVE WHICH TV THIS INSTANCE IS ─────────────────────── */
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(err => console.warn('SW registration failed:', err));
+}
+
 const tvParam = parseInt(new URLSearchParams(window.location.search).get('tv'), 10);
 const TV_NUM  = [1, 2, 3].includes(tvParam) ? tvParam : 1;
 document.getElementById('stage').classList.add(CONFIG.ORIENTATIONS[TV_NUM] ?? 'landscape');
@@ -291,6 +295,26 @@ function updateStatus() {
 
 /* ─── PLAYLIST REFRESH ───────────────────────────────────────── */
 
+async function syncCache(newPlaylist) {
+  if (!('caches' in window)) return;
+  const cache = await caches.open('fcb-media-v1');
+  const keys  = await cache.keys();
+  const cachedUrls = new Set(keys.map(r => r.url));
+  const newUrls    = new Set(newPlaylist.map(p => p.url));
+
+  // Pre-fetch files not yet cached (background, non-blocking)
+  for (const item of newPlaylist) {
+    if (!cachedUrls.has(item.url)) {
+      cache.add(item.url).catch(() => {});
+    }
+  }
+
+  // Remove files no longer in the playlist
+  for (const request of keys) {
+    if (!newUrls.has(request.url)) cache.delete(request);
+  }
+}
+
 async function refreshPlaylist() {
   try {
     const newPlaylist = await fetchPlaylist();
@@ -316,6 +340,7 @@ async function refreshPlaylist() {
     const currentUrl = playlist[currentIdx]?.url;
     playlist = newPlaylist;
     buildSlides(playlist);
+    syncCache(playlist);
 
     const resumeIdx = playlist.findIndex(p => p.url === currentUrl);
     currentIdx = resumeIdx >= 0 ? resumeIdx : 0;
