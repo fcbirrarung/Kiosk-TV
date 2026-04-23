@@ -1,7 +1,7 @@
-name       = "kiosk-playlist"
-main       = "worker.js"
-workers_sdk_version = "^3"
+name = "kiosk-playlist"
+main = "worker.js"
+compatibility_date = "2026-04-23"
 
 [[r2_buckets]]
-binding     = "KIOSK_BUCKET"
-bucket_name = "kiosk-media"
+binding = "KIOSK_BUCKET"
+bucket_name = "kiosk-tv"
