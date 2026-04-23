@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FC Birrarung Signage</title>
+  <style>
+    /* ─── RESET ─────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+
+    /* ─── KIOSK CONTAINER: 9:16 centred ─────────────────────── */
+    #kiosk {
+      position: fixed;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+
+    #stage {
+      position: relative;
+      /* 9:16 portrait inside whatever the screen is */
+      aspect-ratio: 9 / 16;
+      height: 100%;
+      max-height: 100vh;
+      max-width: calc(100vh * 9 / 16);
+      background: #000;
+      overflow: hidden;
+    }
+
+    /* ─── MEDIA SLOTS ────────────────────────────────────────── */
+    .slide {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      opacity: 0;
+      /* Hard cut: no transition */
+      pointer-events: none;
+    }
+
+    .slide.active {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .slide img, .slide video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      display: block;
+    }
+
+    /* ─── LOADING / ERROR OVERLAY ────────────────────────────── */
+    #overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: #0a0a0a;
+      color: #fff;
+      gap: 1.5rem;
+      z-index: 10;
+      transition: opacity 0.4s ease;
+    }
+
+    #overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #overlay .spinner {
+      width: 48px;
+      height: 48px;
+      border: 3px solid rgba(255,255,255,0.15);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+
+    #overlay .msg {
+      font-size: 0.9rem;
+      letter-spacing: 0.08em;
+      opacity: 0.6;
+      text-transform: uppercase;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ─── STATUS BADGE (bottom-right, subtle) ────────────────── */
+    #status {
+      position: absolute;
+      bottom: 1rem;
+      right: 1rem;
+      font-size: 0.65rem;
+      letter-spacing: 0.06em;
+      color: rgba(255,255,255,0.25);
+      z-index: 20;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+
+<div id="kiosk">
+  <div id="stage">
+
+    <!-- Loading/error overlay -->
+    <div id="overlay">
+      <div class="spinner"></div>
+      <div class="msg" id="overlayMsg">Loading playlist...</div>
+    </div>
+
+    <!-- Slides injected here by JS -->
+
+    <!-- Status badge -->
+    <div id="status">Initialising...</div>
+
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   CONFIGURATION -- edit these values before deploying
+   ═══════════════════════════════════════════════════════════════
+
+   URL USAGE:
+     https://yoursite.com/kiosk.html?tv=1   -> TV 1
+     https://yoursite.com/kiosk.html?tv=2   -> TV 2
+     https://yoursite.com/kiosk.html?tv=3   -> TV 3
+     (missing or invalid ?tv= defaults to TV 1)
+
+   ═══════════════════════════════════════════════════════════════ */
+const CONFIG = {
+  // Google Drive API key (restricted to your domain in Google Cloud Console)
+  API_KEY: 'YOUR_API_KEY_HERE',
+
+  // One Drive folder ID per TV.
+  // Get the ID from the folder URL:
+  //   https://drive.google.com/drive/folders/THIS_PART
+  FOLDERS: {
+    1: 'YOUR_FOLDER_ID_TV1',
+    2: 'YOUR_FOLDER_ID_TV2',
+    3: 'YOUR_FOLDER_ID_TV3',
+  },
+
+  // Seconds each image is displayed (videos play to completion)
+  IMAGE_DURATION_SEC: 4,
+
+  // How often to refresh the playlist from Drive (milliseconds)
+  PLAYLIST_REFRESH_MS: 5 * 60 * 1000, // 5 minutes
+
+  // Supported MIME types
+  IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  VIDEO_TYPES: ['video/mp4', 'video/webm', 'video/quicktime'],
+};
+
+/* ─── RESOLVE WHICH TV THIS INSTANCE IS ─────────────────────── */
+const tvParam  = parseInt(new URLSearchParams(window.location.search).get('tv'), 10);
+const TV_NUM   = CONFIG.FOLDERS[tvParam] ? tvParam : 1;
+const FOLDER_ID = CONFIG.FOLDERS[TV_NUM];
+/* ═══════════════════════════════════════════════════════════════ */
+
+
+/* ─── STATE ──────────────────────────────────────────────────── */
+let playlist    = [];   // Array of { id, name, mimeType, url }
+let currentIdx  = 0;
+let slideTimer  = null;
+let slides      = [];   // DOM elements
+
+const stage      = document.getElementById('stage');
+const overlay    = document.getElementById('overlay');
+const overlayMsg = document.getElementById('overlayMsg');
+const statusEl   = document.getElementById('status');
+
+
+/* ─── GOOGLE DRIVE HELPERS ───────────────────────────────────── */
+
+/**
+ * Build a direct media URL for a Drive file.
+ * Uses the export/download link which works with an API key for public files.
+ */
+function driveMediaUrl(fileId, mimeType) {
+  // For images/video, we stream directly
+  return `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${CONFIG.API_KEY}`;
+}
+
+/**
+ * Fetch the list of media files from the configured Drive folder.
+ * Returns an array of file metadata objects.
+ */
+async function fetchPlaylist() {
+  const mimeFilter = [
+    ...CONFIG.IMAGE_TYPES,
+    ...CONFIG.VIDEO_TYPES,
+  ].map(t => `mimeType='${t}'`).join(' or ');
+
+  const params = new URLSearchParams({
+    key: CONFIG.API_KEY,
+    q: `'${FOLDER_ID}' in parents and (${mimeFilter}) and trashed=false`,
+    fields: 'files(id,name,mimeType)',
+    orderBy: 'name',  // alphabetical -- rename files with 01_, 02_ prefix to control order
+    pageSize: 50,
+  });
+
+  const url = `https://www.googleapis.com/drive/v3/files?${params}`;
+  const res = await fetch(url);
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(`Drive API error ${res.status}: ${err?.error?.message || res.statusText}`);
+  }
+
+  const data = await res.json();
+  return (data.files || []).map(f => ({
+    id:       f.id,
+    name:     f.name,
+    mimeType: f.mimeType,
+    url:      driveMediaUrl(f.id, f.mimeType),
+  }));
+}
+
+
+/* ─── SLIDE MANAGEMENT ───────────────────────────────────────── */
+
+function isVideo(mimeType) {
+  return CONFIG.VIDEO_TYPES.includes(mimeType);
+}
+
+/**
+ * Rebuild the slide DOM elements from the current playlist.
+ * Attempts to reuse existing slides to avoid re-downloading media.
+ */
+function buildSlides(newPlaylist) {
+  // Remove old slides
+  slides.forEach(s => s.remove());
+  slides = [];
+
+  newPlaylist.forEach((item, i) => {
+    const slide = document.createElement('div');
+    slide.className = 'slide';
+    slide.dataset.idx = i;
+
+    if (isVideo(item.mimeType)) {
+      const vid = document.createElement('video');
+      vid.src = item.url;
+      vid.muted = true;
+      vid.playsInline = true;
+      vid.preload = 'auto';
+      // When video ends, advance to next slide
+      vid.addEventListener('ended', () => advance());
+      vid.addEventListener('error', (e) => {
+        console.error(`Video load error for ${item.name}:`, e);
+        advance(); // skip broken file
+      });
+      slide.appendChild(vid);
+    } else {
+      const img = document.createElement('img');
+      img.src = item.url;
+      img.alt = item.name;
+      img.addEventListener('error', () => {
+        console.error(`Image load error for ${item.name}`);
+        advance(); // skip broken file
+      });
+      slide.appendChild(img);
+    }
+
+    stage.insertBefore(slide, document.getElementById('status'));
+    slides.push(slide);
+  });
+}
+
+/**
+ * Show the slide at the given index (hard cut).
+ */
+function showSlide(idx) {
+  // Deactivate all
+  slides.forEach(s => {
+    s.classList.remove('active');
+    // Pause any playing videos
+    const vid = s.querySelector('video');
+    if (vid) vid.pause();
+  });
+
+  if (slides.length === 0) return;
+
+  const slide = slides[idx];
+  slide.classList.add('active');
+
+  const vid = slide.querySelector('video');
+  if (vid) {
+    vid.currentTime = 0;
+    vid.play().catch(err => {
+      // Autoplay blocked -- advance past this slide
+      console.warn('Autoplay blocked:', err);
+      advance();
+    });
+    // No timer for videos; 'ended' event handles advance
+  } else {
+    // Image: set a timer
+    clearTimeout(slideTimer);
+    slideTimer = setTimeout(() => advance(), CONFIG.IMAGE_DURATION_SEC * 1000);
+  }
+
+  updateStatus();
+}
+
+/**
+ * Move to the next slide, wrapping around.
+ */
+function advance() {
+  if (slides.length === 0) return;
+  currentIdx = (currentIdx + 1) % slides.length;
+  showSlide(currentIdx);
+}
+
+function updateStatus() {
+  const item = playlist[currentIdx];
+  if (!item) return;
+  statusEl.textContent = `TV${TV_NUM} · ${currentIdx + 1} / ${playlist.length}`;
+}
+
+
+/* ─── PLAYLIST REFRESH ───────────────────────────────────────── */
+
+/**
+ * Load or refresh the playlist from Drive.
+ * If already playing, attempts a seamless update:
+ *   - If playlist unchanged (same file IDs in order), does nothing.
+ *   - If changed, rebuilds slides and resumes from index 0.
+ */
+async function refreshPlaylist() {
+  try {
+    const newPlaylist = await fetchPlaylist();
+
+    if (newPlaylist.length === 0) {
+      console.warn('Drive folder is empty or no supported media found.');
+      overlayMsg.textContent = 'No media found in folder.';
+      overlay.classList.remove('hidden');
+      return;
+    }
+
+    // Check if playlist actually changed (compare IDs)
+    const oldIds = playlist.map(p => p.id).join(',');
+    const newIds = newPlaylist.map(p => p.id).join(',');
+
+    if (oldIds === newIds) {
+      console.log('Playlist unchanged, no rebuild needed.');
+      return;
+    }
+
+    console.log(`Playlist updated: ${newPlaylist.length} items.`);
+    playlist = newPlaylist;
+
+    // Remember where we were (by file ID) to avoid jarring restarts if possible
+    const currentId = playlist[currentIdx]?.id;
+    buildSlides(playlist);
+
+    // Try to resume at same file, else start at 0
+    const resumeIdx = playlist.findIndex(p => p.id === currentId);
+    currentIdx = resumeIdx >= 0 ? resumeIdx : 0;
+
+    overlay.classList.add('hidden');
+    showSlide(currentIdx);
+
+  } catch (err) {
+    console.error('Playlist refresh failed:', err);
+
+    if (playlist.length === 0) {
+      // First load failed -- show error
+      overlayMsg.textContent = `Error loading playlist. Retrying...`;
+      overlay.classList.remove('hidden');
+    } else {
+      // Already playing -- log silently and keep going
+      console.warn('Using cached playlist due to refresh error.');
+    }
+  }
+}
+
+
+/* ─── BOOT ───────────────────────────────────────────────────── */
+
+async function init() {
+  // Validate config
+  if (CONFIG.API_KEY === 'YOUR_API_KEY_HERE' || FOLDER_ID.startsWith('YOUR_FOLDER_ID')) {
+    overlayMsg.textContent = 'Configure API_KEY and FOLDERS in the script.';
+    overlay.classList.remove('hidden');
+    document.querySelector('.spinner').style.display = 'none';
+    return;
+  }
+
+  // Initial load
+  await refreshPlaylist();
+
+  // Schedule periodic refresh
+  setInterval(refreshPlaylist, CONFIG.PLAYLIST_REFRESH_MS);
+}
+
+// Kick off
+init();
+</script>
+</body>
+</html>
