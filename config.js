@@ -5,7 +5,7 @@ const CONFIG = {
   ORIENTATIONS: {
     1: 'portrait',
     2: 'portrait',
-    3: 'landscape',
+    3: 'portrait',
   },
 
   IMAGE_DURATION_SEC:  7,
