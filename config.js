@@ -8,7 +8,7 @@ const CONFIG = {
     3: 'portrait',
   },
 
-  IMAGE_DURATION_SEC:  7,
+  IMAGE_DURATION_SEC:  10,
   PLAYLIST_REFRESH_MS: 5 * 60 * 1000,
 
   IMAGE_TYPES: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
